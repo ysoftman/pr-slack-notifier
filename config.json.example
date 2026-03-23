@@ -1,0 +1,13 @@
+{
+    "GITHUB_API_URL": "https://your-domain/api/v3",
+    "GITHUB_ORG": "your-org",
+    "GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "SLACK_WEBHOOK_URL": "your-slack-webhook-url",
+    "SLACK_BOT_TOKEN": "xoxb-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
+    "NOTIFICATION_MODE": "webhook",
+    "USER_MAPPING": {
+        "github-username-1": "U01ABCDEF",
+        "github-username-2": "U02GHIJKL",
+        "github-username-3": "U03MNOPQR"
+    }
+}

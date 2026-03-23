@@ -1,0 +1,8 @@
+target/
+.git/
+.gitignore
+.claude/
+*.md
+config.json
+config.json.example
+Makefile
