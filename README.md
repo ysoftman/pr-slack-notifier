@@ -69,7 +69,10 @@ Slack App에 다음 권한이 필요합니다:
 ### USER_MAPPING 설정
 
 GitHub username과 Slack user ID를 매핑합니다.
-Slack user ID는 Slack 프로필에서 확인할 수 있습니다.
+
+Slack user ID 확인 방법:
+
+- Slack에서 사용자 프로필 클릭 → 더보기(⋯) → **멤버 ID 복사** (`U01ABCDEF` 형식)
 
 ```json
 {
