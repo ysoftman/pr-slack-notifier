@@ -4,6 +4,7 @@ use clap::Parser;
 use colored::Colorize;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -18,6 +19,10 @@ struct Cli {
     /// 실제 전송 없이 미리보기
     #[arg(long)]
     dry_run: bool,
+
+    /// 확인 없이 모든 알림을 자동 전송
+    #[arg(long)]
+    auto_send: bool,
 
     /// 설정 파일 경로 (기본: config.json)
     #[arg(long, default_value = "config.json")]
@@ -158,11 +163,12 @@ const SLACK_API_BASE: &str = "https://slack.com/api";
 struct App {
     cfg: AppConfig,
     dry_run: bool,
+    auto_send: bool,
     client: reqwest::blocking::Client,
 }
 
 impl App {
-    fn new(cfg: AppConfig, dry_run: bool) -> Result<Self> {
+    fn new(cfg: AppConfig, dry_run: bool, auto_send: bool) -> Result<Self> {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .user_agent("pr-slack-notifier")
@@ -172,6 +178,7 @@ impl App {
         Ok(App {
             cfg,
             dry_run,
+            auto_send,
             client,
         })
     }
@@ -431,8 +438,42 @@ impl App {
         Ok(())
     }
 
+    fn print_pr_summary(&self, github_user: &str, prs: &[PrInfo]) {
+        let now = Utc::now();
+        eprintln!(
+            "\n{}",
+            format!("── {github_user} ({} PRs) ──", prs.len()).cyan()
+        );
+        for pr in prs {
+            let elapsed = pr
+                .created_at
+                .map(|c| format_elapsed(now, c))
+                .unwrap_or_default();
+            eprintln!(
+                "  {} {}#{}: {}{}",
+                pr.role.label(),
+                pr.repo,
+                pr.number,
+                pr.title,
+                elapsed
+            );
+            eprintln!("    {}", pr.url.dimmed());
+        }
+    }
+
+    fn ask_confirm(prompt: &str) -> bool {
+        eprint!("{prompt} (yes/no): ");
+        io::stderr().flush().ok();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            return false;
+        }
+        matches!(input.trim().to_ascii_lowercase().as_str(), "yes" | "y")
+    }
+
     fn send_notifications(&self, user_map: &HashMap<String, Vec<PrInfo>>) -> Result<()> {
         let mut sent = 0u32;
+        let mut skipped = 0u32;
         let mut failed = 0u32;
 
         let mut users: Vec<&String> = user_map.keys().collect();
@@ -442,26 +483,28 @@ impl App {
             let prs = &user_map[github_user];
             let slack_id = self.cfg.user_mapping.get(github_user.as_str());
 
-            log_info(&format!(
-                "알림 준비: {github_user} (Slack: {})",
-                slack_id.map_or("매핑 없음", |s| s.as_str())
-            ));
+            self.print_pr_summary(github_user, prs);
+
+            if slack_id.is_none() {
+                log_warn(&format!(
+                    "GitHub 사용자 '{github_user}'의 Slack ID 매핑이 없습니다. 건너뜁니다."
+                ));
+                failed += 1;
+                continue;
+            }
+
+            if !self.auto_send
+                && !Self::ask_confirm(&format!("  → {github_user}에게 알림을 보내시겠습니까?"))
+            {
+                log_info(&format!("{github_user} 알림 건너뜀"));
+                skipped += 1;
+                continue;
+            }
 
             let blocks = self.build_slack_blocks(github_user, prs);
             let text = format!("확인이 필요한 PR이 {}건 있습니다.", prs.len());
 
-            let result = match slack_id {
-                Some(id) => self.send_bot_dm(id, &blocks, &text),
-                None => {
-                    log_warn(&format!(
-                        "GitHub 사용자 '{github_user}'의 Slack ID 매핑이 없습니다. 건너뜁니다."
-                    ));
-                    failed += 1;
-                    continue;
-                }
-            };
-
-            match result {
+            match self.send_bot_dm(slack_id.unwrap(), &blocks, &text) {
                 Ok(()) => sent += 1,
                 Err(e) => {
                     log_error(&format!("{e:#}"));
@@ -472,7 +515,9 @@ impl App {
 
         eprintln!();
         log_info("=== 알림 전송 완료 ===");
-        log_info(&format!("성공: {sent}건, 실패: {failed}건"));
+        log_info(&format!(
+            "성공: {sent}건, 건너뜀: {skipped}건, 실패: {failed}건"
+        ));
 
         if sent == 0 && failed > 0 {
             bail!("모든 알림 전송에 실패했습니다.");
@@ -500,6 +545,6 @@ fn run() -> Result<()> {
     let cfg = AppConfig::load(&cli)?;
     log_info("설정 로드 완료");
 
-    let app = App::new(cfg, cli.dry_run)?;
+    let app = App::new(cfg, cli.dry_run, cli.auto_send)?;
     app.run()
 }
