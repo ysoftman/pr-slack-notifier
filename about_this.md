@@ -3,7 +3,7 @@ title: pr-slack-notifier
 ---
 
 ```bash +exec_replace
-figlet "pr-slack-notifier"
+figlet -f standard "PR Slack" && figlet -f standard "Notifier"
 ```
 
 GitHub PR 알림을 Slack으로 전달하는 CLI 도구
@@ -42,3 +42,16 @@ GitHub PR 알림을 Slack으로 전달하는 CLI 도구
 | `SLACK_BOT_TOKEN` | Slack Bot Token |
 | `REMINDER_HOURS` | 리마인더 기준 시간 (미설정 시 전체) |
 | `USER_MAPPING` | GitHub username → Slack user ID 매핑 |
+
+```json
+{
+    "GITHUB_API_URL": "https://your-domain/api/v3",
+    "GITHUB_ORG": "your-org",
+    "GITHUB_TOKEN": "ghp_xxx...",
+    "SLACK_BOT_TOKEN": "xoxb-xxx...",
+    "REMINDER_HOURS": 48,
+    "USER_MAPPING": {
+        "github-username": "U01ABCDEF"
+    }
+}
+```

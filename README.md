@@ -151,7 +151,7 @@ my-sdk#15: SDK v2 마이그레이션
 [presenterm](https://github.com/mfontanini/presenterm)으로 프로젝트 소개 슬라이드를 볼 수 있습니다.
 
 ```bash
-presenterm about_this.md
+presenterm -X about_this.md
 ```
 
 ## cron 설정 예시
