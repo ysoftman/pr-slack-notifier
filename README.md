@@ -63,7 +63,6 @@ export SLACK_BOT_TOKEN="xoxb-xxxxx"
 Slack App에 다음 권한이 필요합니다:
 
 - `chat:write` - 메시지 전송
-- `conversations.open` - DM 채널 열기
 - `im:write` - DM 전송
 
 ### USER_MAPPING 설정

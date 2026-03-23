@@ -55,3 +55,25 @@ GitHub PR 알림을 Slack으로 전달하는 CLI 도구
     }
 }
 ```
+
+<!-- end_slide -->
+
+## Slack Bot 권한 설정
+
+**OAuth & Permissions** → **Bot Token Scopes**에 다음 권한 추가:
+
+- `chat:write` - 메시지 전송
+- `im:write` - DM 전송
+
+![Slack Bot Permission Scopes](images/slack_bot_permission_scopes.png)
+
+<!-- end_slide -->
+
+## Slack Bot 앱 설치
+
+권한 추가 후 **Install App to Workspace**로 앱을 워크스페이스에 설치 (또는 재설치)
+
+- scope 변경 시 반드시 **Reinstall App**해야 토큰에 반영됨 (재설치 안 하면 `missing_scope` 에러 발생)
+- 설치 후 발급되는 `xoxb-...` 토큰을 `SLACK_BOT_TOKEN`에 설정
+
+![Slack Bot Install App](images/slack_bot_install_app.png)
