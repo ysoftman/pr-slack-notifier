@@ -4,7 +4,6 @@ use clap::Parser;
 use colored::Colorize;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -23,40 +22,9 @@ struct Cli {
     /// 설정 파일 경로 (기본: config.json)
     #[arg(long, default_value = "config.json")]
     config: PathBuf,
-
-    /// 알림 모드: webhook 또는 bot (설정 파일보다 우선)
-    #[arg(long)]
-    mode: Option<NotificationMode>,
 }
 
 // ── Types ──
-
-#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum NotificationMode {
-    Webhook,
-    Bot,
-}
-
-impl fmt::Display for NotificationMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Webhook => write!(f, "webhook"),
-            Self::Bot => write!(f, "bot"),
-        }
-    }
-}
-
-impl std::str::FromStr for NotificationMode {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "webhook" => Ok(Self::Webhook),
-            "bot" => Ok(Self::Bot),
-            other => Err(format!("알 수 없는 알림 모드: {other} (webhook 또는 bot)")),
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 enum Role {
@@ -91,9 +59,7 @@ struct FileConfig {
     github_api_url: String,
     github_org: String,
     github_token: Option<String>,
-    slack_webhook_url: Option<String>,
     slack_bot_token: Option<String>,
-    notification_mode: Option<NotificationMode>,
     reminder_hours: Option<u64>,
     user_mapping: Option<HashMap<String, String>>,
 }
@@ -102,9 +68,7 @@ struct AppConfig {
     github_api_url: String,
     github_org: String,
     github_token: String,
-    slack_webhook_url: String,
     slack_bot_token: String,
-    notification_mode: NotificationMode,
     reminder_hours: Option<u64>,
     user_mapping: HashMap<String, String>,
 }
@@ -126,17 +90,7 @@ impl AppConfig {
         })?;
 
         let github_token = env_or("GITHUB_TOKEN", fc.github_token);
-        let slack_webhook_url = env_or("SLACK_WEBHOOK_URL", fc.slack_webhook_url);
         let slack_bot_token = env_or("SLACK_BOT_TOKEN", fc.slack_bot_token);
-        let notification_mode = cli
-            .mode
-            .or_else(|| {
-                std::env::var("NOTIFICATION_MODE")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-            })
-            .or(fc.notification_mode)
-            .unwrap_or(NotificationMode::Webhook);
 
         if fc.github_api_url.is_empty() {
             bail!("GITHUB_API_URL이 설정되지 않았습니다.");
@@ -147,20 +101,15 @@ impl AppConfig {
         if github_token.is_empty() {
             bail!("GITHUB_TOKEN이 설정되지 않았습니다. 환경변수 또는 config.json에 설정하세요.");
         }
-        if notification_mode == NotificationMode::Webhook && slack_webhook_url.is_empty() {
-            bail!("webhook 모드에는 SLACK_WEBHOOK_URL이 필요합니다.");
-        }
-        if notification_mode == NotificationMode::Bot && slack_bot_token.is_empty() {
-            bail!("bot 모드에는 SLACK_BOT_TOKEN이 필요합니다.");
+        if slack_bot_token.is_empty() {
+            bail!("SLACK_BOT_TOKEN이 설정되지 않았습니다. 환경변수 또는 config.json에 설정하세요.");
         }
 
         Ok(AppConfig {
             github_api_url: fc.github_api_url.trim_end_matches('/').to_string(),
             github_org: fc.github_org,
             github_token,
-            slack_webhook_url,
             slack_bot_token,
-            notification_mode,
             reminder_hours: fc.reminder_hours,
             user_mapping: fc.user_mapping.unwrap_or_default(),
         })
@@ -421,31 +370,6 @@ impl App {
         serde_json::Value::Array(blocks)
     }
 
-    fn send_webhook(&self, blocks: &serde_json::Value, text: &str) -> Result<()> {
-        let payload = serde_json::json!({"text": text, "blocks": blocks});
-
-        if self.dry_run {
-            log_debug("[DRY-RUN] Webhook 전송 내용:");
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-            return Ok(());
-        }
-
-        let resp = self
-            .client
-            .post(&self.cfg.slack_webhook_url)
-            .json(&payload)
-            .send()
-            .context("Slack Webhook 전송 실패")?;
-
-        if !resp.status().is_success() {
-            let body = resp.text().unwrap_or_default();
-            bail!("Slack Webhook 전송 실패: {body}");
-        }
-
-        log_info("Slack Webhook 전송 성공");
-        Ok(())
-    }
-
     fn send_bot_dm(
         &self,
         slack_user_id: &str,
@@ -526,18 +450,15 @@ impl App {
             let blocks = self.build_slack_blocks(github_user, prs);
             let text = format!("확인이 필요한 PR이 {}건 있습니다.", prs.len());
 
-            let result = match self.cfg.notification_mode {
-                NotificationMode::Webhook => self.send_webhook(&blocks, &text),
-                NotificationMode::Bot => match slack_id {
-                    Some(id) => self.send_bot_dm(id, &blocks, &text),
-                    None => {
-                        log_warn(&format!(
-                            "GitHub 사용자 '{github_user}'의 Slack ID 매핑이 없습니다. 건너뜁니다."
-                        ));
-                        failed += 1;
-                        continue;
-                    }
-                },
+            let result = match slack_id {
+                Some(id) => self.send_bot_dm(id, &blocks, &text),
+                None => {
+                    log_warn(&format!(
+                        "GitHub 사용자 '{github_user}'의 Slack ID 매핑이 없습니다. 건너뜁니다."
+                    ));
+                    failed += 1;
+                    continue;
+                }
             };
 
             match result {
@@ -577,7 +498,7 @@ fn run() -> Result<()> {
     }
 
     let cfg = AppConfig::load(&cli)?;
-    log_info(&format!("설정 로드 완료 (모드: {})", cfg.notification_mode));
+    log_info("설정 로드 완료");
 
     let app = App::new(cfg, cli.dry_run)?;
     app.run()
