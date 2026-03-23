@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use colored::Colorize;
 use serde::Deserialize;
@@ -79,6 +80,7 @@ struct PrInfo {
     url: String,
     repo: String,
     role: Role,
+    created_at: Option<DateTime<Utc>>,
 }
 
 // ── Config ──
@@ -92,6 +94,7 @@ struct FileConfig {
     slack_webhook_url: Option<String>,
     slack_bot_token: Option<String>,
     notification_mode: Option<NotificationMode>,
+    reminder_hours: Option<u64>,
     user_mapping: Option<HashMap<String, String>>,
 }
 
@@ -102,6 +105,7 @@ struct AppConfig {
     slack_webhook_url: String,
     slack_bot_token: String,
     notification_mode: NotificationMode,
+    reminder_hours: Option<u64>,
     user_mapping: HashMap<String, String>,
 }
 
@@ -157,8 +161,18 @@ impl AppConfig {
             slack_webhook_url,
             slack_bot_token,
             notification_mode,
+            reminder_hours: fc.reminder_hours,
             user_mapping: fc.user_mapping.unwrap_or_default(),
         })
+    }
+}
+
+fn format_elapsed(now: DateTime<Utc>, created: DateTime<Utc>) -> String {
+    let hours = (now - created).num_hours();
+    if hours < 24 {
+        format!(" | ⏰ {hours}시간 전")
+    } else {
+        format!(" | ⏰ {}일 전", hours / 24)
     }
 }
 
@@ -219,6 +233,10 @@ impl App {
         if prs.is_empty() {
             log_info("열린 PR이 없습니다. 종료합니다.");
             return Ok(());
+        }
+
+        if let Some(hours) = self.cfg.reminder_hours {
+            log_info(&format!("리마인더 모드: {hours}시간 이상 경과된 PR만 알림"));
         }
 
         log_info("PR별 담당자 정보를 수집합니다...");
@@ -288,6 +306,7 @@ impl App {
 
     fn build_user_pr_map(&self, prs: &[serde_json::Value]) -> HashMap<String, Vec<PrInfo>> {
         let mut user_map: HashMap<String, Vec<PrInfo>> = HashMap::new();
+        let now = Utc::now();
 
         for pr in prs {
             let number = pr["number"].as_u64().unwrap_or(0);
@@ -306,12 +325,25 @@ impl App {
                 }
             });
 
+            let created_at = pr["created_at"]
+                .as_str()
+                .and_then(|s| s.parse::<DateTime<Utc>>().ok());
+
+            // reminder_hours 설정 시, 해당 시간 미만인 PR은 건너뜀
+            if let (Some(hours), Some(created)) = (self.cfg.reminder_hours, created_at) {
+                let elapsed_hours = (now - created).num_hours();
+                if elapsed_hours < hours as i64 {
+                    continue;
+                }
+            }
+
             let base = PrInfo {
                 number,
                 title,
                 url: html_url,
                 repo,
                 role: Role::Assignee, // placeholder, overwritten below
+                created_at,
             };
 
             let mut add_users = |arr: &[serde_json::Value], role: Role| {
@@ -365,12 +397,17 @@ impl App {
             serde_json::json!({"type": "divider"}),
         ];
 
+        let now = Utc::now();
         for pr in prs {
+            let elapsed = pr
+                .created_at
+                .map(|c| format_elapsed(now, c))
+                .unwrap_or_default();
             blocks.push(serde_json::json!({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": format!("*<{}|{}#{}: {}>*\n{}", pr.url, pr.repo, pr.number, pr.title, pr.role.label())
+                    "text": format!("*<{}|{}#{}: {}>*\n{}{}", pr.url, pr.repo, pr.number, pr.title, pr.role.label(), elapsed)
                 }
             }));
         }

@@ -5,6 +5,7 @@
     "SLACK_WEBHOOK_URL": "your-slack-webhook-url",
     "SLACK_BOT_TOKEN": "xoxb-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
     "NOTIFICATION_MODE": "webhook",
+    "REMINDER_HOURS": 48,
     "USER_MAPPING": {
         "github-username-1": "U01ABCDEF",
         "github-username-2": "U02GHIJKL",
