@@ -82,7 +82,7 @@ impl AppConfig {
     fn load(cli: &Cli) -> Result<Self> {
         let content = std::fs::read_to_string(&cli.config).with_context(|| {
             format!(
-                "설정 파일을 찾을 수 없습니다: {}\nconfig.json.example을 참고하여 config.json을 생성하세요.",
+                "설정 파일을 찾을 수 없습니다: {}\nconfig-sample.json을 참고하여 config.json을 생성하세요.",
                 cli.config.display()
             )
         })?;

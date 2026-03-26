@@ -34,10 +34,9 @@ sudo make install
 
 ## 설정
 
-`config.json.example`을 복사하여 `config.json`을 생성합니다.
-
 ```bash
-cp config.json.example config.json
+# config-sample.json 을 복사하여 config.json을 생성합니다.
+cp config-sample.json config.json
 ```
 
 `config.json` 필드 설명:
