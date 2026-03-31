@@ -1,6 +1,6 @@
 {
     "GITHUB_API_URL": "https://your-domain/api/v3",
-    "GITHUB_ORG": "your-org",
+    "GITHUB_ORGS": ["your-org-1", "your-org-2"],
     "GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "SLACK_BOT_TOKEN": "xoxb-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
     "REMINDER_HOURS": 48,

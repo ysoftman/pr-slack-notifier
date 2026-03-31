@@ -44,7 +44,7 @@ cp config-sample.json config.json
 | 필드 | 설명 |
 |---|---|
 | `GITHUB_API_URL` | GitHub Enterprise API base URL |
-| `GITHUB_ORG` | GitHub 조직명 |
+| `GITHUB_ORGS` | GitHub 조직명 (문자열 또는 배열) |
 | `GITHUB_TOKEN` | GitHub Personal Access Token |
 | `SLACK_BOT_TOKEN` | Slack Bot Token |
 | `REMINDER_HOURS` | 리마인더 기준 시간 (예: `48` → 48시간 이상 경과된 PR만 알림, 미설정 시 전체) |

@@ -37,7 +37,7 @@ GitHub PR 알림을 Slack으로 전달하는 CLI 도구
 | 필드 | 설명 |
 |------|------|
 | `GITHUB_API_URL` | GitHub Enterprise API base URL |
-| `GITHUB_ORG` | GitHub 조직명 |
+| `GITHUB_ORGS` | GitHub 조직명 (문자열 또는 배열) |
 | `GITHUB_TOKEN` | GitHub Personal Access Token |
 | `SLACK_BOT_TOKEN` | Slack Bot Token |
 | `REMINDER_HOURS` | 리마인더 기준 시간 (미설정 시 전체) |
@@ -46,7 +46,7 @@ GitHub PR 알림을 Slack으로 전달하는 CLI 도구
 ```json
 {
     "GITHUB_API_URL": "https://your-domain/api/v3",
-    "GITHUB_ORG": "your-org",
+    "GITHUB_ORGS": ["your-org-1", "your-org-2"],
     "GITHUB_TOKEN": "ghp_xxx...",
     "SLACK_BOT_TOKEN": "xoxb-xxx...",
     "REMINDER_HOURS": 48,

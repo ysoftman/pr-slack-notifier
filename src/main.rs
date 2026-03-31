@@ -59,10 +59,26 @@ struct PrInfo {
 // ── Config ──
 
 #[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl OneOrMany {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::One(s) => vec![s],
+            Self::Many(v) => v,
+        }
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 struct FileConfig {
     github_api_url: String,
-    github_org: String,
+    github_orgs: OneOrMany,
     github_token: Option<String>,
     slack_bot_token: Option<String>,
     reminder_hours: Option<u64>,
@@ -71,7 +87,7 @@ struct FileConfig {
 
 struct AppConfig {
     github_api_url: String,
-    github_org: String,
+    github_orgs: Vec<String>,
     github_token: String,
     slack_bot_token: String,
     reminder_hours: Option<u64>,
@@ -97,11 +113,18 @@ impl AppConfig {
         let github_token = env_or("GITHUB_TOKEN", fc.github_token);
         let slack_bot_token = env_or("SLACK_BOT_TOKEN", fc.slack_bot_token);
 
+        let github_orgs: Vec<String> = fc
+            .github_orgs
+            .into_vec()
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+
         if fc.github_api_url.is_empty() {
             bail!("GITHUB_API_URL이 설정되지 않았습니다.");
         }
-        if fc.github_org.is_empty() {
-            bail!("GITHUB_ORG가 설정되지 않았습니다.");
+        if github_orgs.is_empty() {
+            bail!("GITHUB_ORGS가 설정되지 않았습니다.");
         }
         if github_token.is_empty() {
             bail!("GITHUB_TOKEN이 설정되지 않았습니다. 환경변수 또는 config.json에 설정하세요.");
@@ -112,7 +135,7 @@ impl AppConfig {
 
         Ok(AppConfig {
             github_api_url: fc.github_api_url.trim_end_matches('/').to_string(),
-            github_org: fc.github_org,
+            github_orgs,
             github_token,
             slack_bot_token,
             reminder_hours: fc.reminder_hours,
@@ -222,6 +245,8 @@ impl App {
         let status = resp.status();
         let body = resp.text().context("GitHub API 응답 읽기 실패")?;
 
+        log_debug(&format!("GitHub API: {endpoint} → HTTP {status}"));
+
         if !status.is_success() {
             bail!("GitHub API 요청 실패 (HTTP {status}): {url}\n{body}");
         }
@@ -229,28 +254,64 @@ impl App {
         serde_json::from_str(&body).context("GitHub API 응답 JSON 파싱 실패")
     }
 
-    fn fetch_open_prs(&self) -> Result<Vec<serde_json::Value>> {
-        log_info("조직의 열린 PR을 조회합니다...");
-
-        let mut all_prs: Vec<serde_json::Value> = Vec::new();
-        let max_pages = 10; // GitHub search API는 최대 1000건 (100 x 10)
-        let query = format!("org:{}+type:pr+state:open+draft:false", self.cfg.github_org);
-
-        for page in 1..=max_pages {
-            let response = self.github_api(&format!(
-                "/search/issues?q={query}&per_page=100&page={page}"
-            ))?;
-
-            let items = response["items"].as_array().cloned().unwrap_or_default();
+    fn fetch_org_repos(&self, org: &str) -> Result<Vec<String>> {
+        let mut repos = Vec::new();
+        for page in 1..=10 {
+            let endpoint = format!("/orgs/{org}/repos?per_page=100&page={page}");
+            let response = self.github_api(&endpoint)?;
+            let items = response.as_array().cloned().unwrap_or_default();
             if items.is_empty() {
                 break;
             }
-
-            all_prs.extend(items);
-
-            let total = response["total_count"].as_u64().unwrap_or(0);
-            if all_prs.len() as u64 >= total {
+            for repo in &items {
+                if let Some(name) = repo["name"].as_str() {
+                    repos.push(name.to_string());
+                }
+            }
+            if items.len() < 100 {
                 break;
+            }
+        }
+        Ok(repos)
+    }
+
+    fn fetch_open_prs(&self) -> Result<Vec<serde_json::Value>> {
+        let mut all_prs: Vec<serde_json::Value> = Vec::new();
+
+        for org in &self.cfg.github_orgs {
+            log_info(&format!("[{org}] 레포지토리 목록을 조회합니다..."));
+            let repos = self.fetch_org_repos(org)?;
+            log_info(&format!("[{org}] 레포지토리 {}개 발견", repos.len()));
+
+            for repo_name in &repos {
+                for page in 1..=10 {
+                    let endpoint = format!(
+                        "/repos/{org}/{repo_name}/pulls?state=open&per_page=100&page={page}"
+                    );
+                    let response = match self.github_api(&endpoint) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            log_warn(&format!("{org}/{repo_name} PR 조회 실패: {e:#}"));
+                            break;
+                        }
+                    };
+
+                    let items = response.as_array().cloned().unwrap_or_default();
+                    let count = items.len();
+                    if count == 0 {
+                        break;
+                    }
+
+                    let non_draft: Vec<_> = items
+                        .into_iter()
+                        .filter(|pr| pr["draft"].as_bool() != Some(true))
+                        .collect();
+                    all_prs.extend(non_draft);
+
+                    if count < 100 {
+                        break;
+                    }
+                }
             }
         }
 
@@ -270,17 +331,6 @@ impl App {
             let html_url = pr["html_url"].as_str().unwrap_or("").to_string();
             let repo = html_url.rsplit('/').nth(2).unwrap_or("").to_string();
 
-            let pr_detail = pr["pull_request"]["url"].as_str().and_then(|api_url| {
-                let path = api_url.strip_prefix(&self.cfg.github_api_url)?;
-                match self.github_api(path) {
-                    Ok(detail) => Some(detail),
-                    Err(e) => {
-                        log_warn(&format!("PR #{number} 상세 조회 실패: {e:#}"));
-                        None
-                    }
-                }
-            });
-
             let created_at = pr["created_at"]
                 .as_str()
                 .and_then(|s| s.parse::<DateTime<Utc>>().ok());
@@ -298,7 +348,7 @@ impl App {
                 title,
                 url: html_url,
                 repo,
-                role: Role::Assignee, // placeholder, overwritten below
+                role: Role::Assignee,
                 created_at,
             };
 
@@ -312,20 +362,11 @@ impl App {
                 }
             };
 
-            // Assignees (prefer PR detail, fallback to search result)
-            if let Some(arr) = pr_detail
-                .as_ref()
-                .and_then(|d| d["assignees"].as_array())
-                .or_else(|| pr["assignees"].as_array())
-            {
+            if let Some(arr) = pr["assignees"].as_array() {
                 add_users(arr, Role::Assignee);
             }
 
-            // Requested reviewers (PR detail only)
-            if let Some(arr) = pr_detail
-                .as_ref()
-                .and_then(|d| d["requested_reviewers"].as_array())
-            {
+            if let Some(arr) = pr["requested_reviewers"].as_array() {
                 add_users(arr, Role::Reviewer);
             }
         }
