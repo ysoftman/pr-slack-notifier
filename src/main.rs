@@ -16,7 +16,7 @@ static VERBOSE: AtomicBool = AtomicBool::new(false);
 #[derive(Parser)]
 #[command(
     version,
-    about = "GitHub Enterprise의 열린 PR 담당자들에게 Slack 알림을 보냅니다."
+    about = "GitHub Enterprise의 열린 PR 리뷰어들에게 Slack 알림을 보냅니다."
 )]
 struct Cli {
     /// 실제 전송 없이 미리보기
@@ -38,29 +38,15 @@ struct Cli {
 
 // ── Types ──
 
-#[derive(Clone, Copy)]
-enum Role {
-    Assignee,
-    Reviewer,
-}
-
-impl Role {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Assignee => "👤 Assignee",
-            Self::Reviewer => "👀 Reviewer",
-        }
-    }
-}
-
 #[derive(Clone)]
 struct PrInfo {
     number: u64,
     title: String,
     url: String,
     repo: String,
-    role: Role,
     created_at: Option<DateTime<Utc>>,
+    reviewers: Vec<String>,
+    assignees: Vec<String>,
 }
 
 // ── Config ──
@@ -216,9 +202,9 @@ impl App {
     }
 
     fn run(&self) -> Result<()> {
-        let prs = self.fetch_open_prs()?;
+        let raw_prs = self.fetch_open_prs()?;
 
-        if prs.is_empty() {
+        if raw_prs.is_empty() {
             log_info("열린 PR이 없습니다. 종료합니다.");
             return Ok(());
         }
@@ -227,16 +213,15 @@ impl App {
             log_info(&format!("리마인더 모드: {hours}시간 이상 경과된 PR만 알림"));
         }
 
-        log_info("PR별 담당자 정보를 수집합니다...");
-        let user_map = self.build_user_pr_map(&prs);
+        log_info("PR별 리뷰어 정보를 수집합니다...");
+        let pr_infos = self.build_pr_infos(&raw_prs);
 
-        if user_map.is_empty() {
-            log_info("담당자가 지정된 PR이 없습니다. 종료합니다.");
+        if pr_infos.is_empty() {
+            log_info("리뷰 대기 중인 리뷰어가 없습니다. 종료합니다.");
             return Ok(());
         }
 
-        log_info(&format!("알림 대상: {}명", user_map.len()));
-        self.send_notifications(&user_map)
+        self.send_notifications(&pr_infos)
     }
 
     // ── GitHub API ──
@@ -328,11 +313,11 @@ impl App {
         Ok(all_prs)
     }
 
-    // ── User-PR mapping ──
+    // ── PR info collection ──
 
-    fn build_user_pr_map(&self, prs: &[serde_json::Value]) -> HashMap<String, Vec<PrInfo>> {
-        let mut user_map: HashMap<String, Vec<PrInfo>> = HashMap::new();
+    fn build_pr_infos(&self, prs: &[serde_json::Value]) -> Vec<PrInfo> {
         let now = Utc::now();
+        let mut result = Vec::new();
 
         for pr in prs {
             let number = pr["number"].as_u64().unwrap_or(0);
@@ -352,53 +337,62 @@ impl App {
                 }
             }
 
-            let base = PrInfo {
+            let reviewers: Vec<String> = pr["requested_reviewers"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|r| r["login"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if reviewers.is_empty() {
+                continue;
+            }
+
+            let assignees: Vec<String> = pr["assignees"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|a| a["login"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            result.push(PrInfo {
                 number,
                 title,
                 url: html_url,
                 repo,
-                role: Role::Assignee,
                 created_at,
-            };
-
-            let mut add_users = |arr: &[serde_json::Value], role: Role| {
-                for item in arr {
-                    if let Some(login) = item["login"].as_str() {
-                        let mut info = base.clone();
-                        info.role = role;
-                        user_map.entry(login.to_string()).or_default().push(info);
-                    }
-                }
-            };
-
-            if let Some(arr) = pr["assignees"].as_array() {
-                add_users(arr, Role::Assignee);
-            }
-
-            if let Some(arr) = pr["requested_reviewers"].as_array() {
-                add_users(arr, Role::Reviewer);
-            }
+                reviewers,
+                assignees,
+            });
         }
 
-        user_map
+        result
     }
 
     // ── Slack ──
 
-    fn build_slack_blocks(&self, github_user: &str, prs: &[PrInfo]) -> serde_json::Value {
-        let mention = match self.cfg.user_mapping.get(github_user) {
+    fn mention_for(&self, github_user: &str) -> String {
+        match self.cfg.user_mapping.get(github_user) {
             Some(id) => format!("<@{id}>"),
             None => format!("*{github_user}*"),
-        };
+        }
+    }
+
+    fn build_reviewer_blocks(&self, github_user: &str, prs: &[&PrInfo]) -> serde_json::Value {
+        let mention = self.mention_for(github_user);
 
         let mut blocks = vec![
             serde_json::json!({
                 "type": "header",
-                "text": {"type": "plain_text", "text": "📬 PR 리뷰/처리 요청", "emoji": true}
+                "text": {"type": "plain_text", "text": "📬 PR 리뷰 요청", "emoji": true}
             }),
             serde_json::json!({
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": format!("{mention}님, 확인이 필요한 PR이 *{}건* 있습니다.", prs.len())}
+                "text": {"type": "mrkdwn", "text": format!("{mention}님, 리뷰가 필요한 PR이 *{}건* 있습니다.", prs.len())}
             }),
             serde_json::json!({"type": "divider"}),
         ];
@@ -413,7 +407,7 @@ impl App {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": format!("*<{}|{}#{}: {}>*\n{}{}", pr.url, pr.repo, pr.number, pr.title, pr.role.label(), elapsed)
+                    "text": format!("*<{}|{}#{}: {}>*\n👀 Reviewer{}", pr.url, pr.repo, pr.number, pr.title, elapsed)
                 }
             }));
         }
@@ -421,8 +415,58 @@ impl App {
         blocks.push(serde_json::json!({"type": "divider"}));
         blocks.push(serde_json::json!({
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": "🤖 PR Notifier | 열린 PR 알림"}]
+            "elements": [{"type": "mrkdwn", "text": "🤖 PR Notifier | 리뷰 요청 알림"}]
         }));
+
+        serde_json::Value::Array(blocks)
+    }
+
+    fn build_assignee_blocks(
+        &self,
+        github_user: &str,
+        pr: &PrInfo,
+        notified_reviewers: &[&str],
+    ) -> serde_json::Value {
+        let mention = self.mention_for(github_user);
+        let reviewer_mentions: Vec<String> = notified_reviewers
+            .iter()
+            .map(|r| self.mention_for(r))
+            .collect();
+
+        let now = Utc::now();
+        let elapsed = pr
+            .created_at
+            .map(|c| format_elapsed(now, c))
+            .unwrap_or_default();
+
+        let blocks = vec![
+            serde_json::json!({
+                "type": "header",
+                "text": {"type": "plain_text", "text": "📣 PR 리뷰 알림 발송 안내", "emoji": true}
+            }),
+            serde_json::json!({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": format!(
+                        "{mention}님, 아래 PR의 리뷰어들에게 리뷰 요청 알림을 보냈습니다.\n\n*<{}|{}#{}: {}>*{}",
+                        pr.url, pr.repo, pr.number, pr.title, elapsed
+                    )
+                }
+            }),
+            serde_json::json!({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": format!("📨 알림 대상: {}", reviewer_mentions.join(", "))
+                }
+            }),
+            serde_json::json!({"type": "divider"}),
+            serde_json::json!({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "🤖 PR Notifier | 리뷰 알림 발송 안내"}]
+            }),
+        ];
 
         serde_json::Value::Array(blocks)
     }
@@ -488,29 +532,6 @@ impl App {
         Ok(())
     }
 
-    fn print_pr_summary(&self, github_user: &str, prs: &[PrInfo]) {
-        let now = Utc::now();
-        eprintln!(
-            "\n{}",
-            format!("── {github_user} ({} PRs) ──", prs.len()).cyan()
-        );
-        for pr in prs {
-            let elapsed = pr
-                .created_at
-                .map(|c| format_elapsed(now, c))
-                .unwrap_or_default();
-            eprintln!(
-                "  {} {}#{}: {}{}",
-                pr.role.label(),
-                pr.repo,
-                pr.number,
-                pr.title,
-                elapsed
-            );
-            eprintln!("    {}", pr.url.dimmed());
-        }
-    }
-
     fn ask_confirm(prompt: &str) -> bool {
         eprint!("{prompt} (yes/no): ");
         io::stderr().flush().ok();
@@ -521,41 +542,77 @@ impl App {
         matches!(input.trim().to_ascii_lowercase().as_str(), "yes" | "y")
     }
 
-    fn send_notifications(&self, user_map: &HashMap<String, Vec<PrInfo>>) -> Result<()> {
+    fn send_notifications(&self, pr_infos: &[PrInfo]) -> Result<()> {
+        // 리뷰어별 PR 그룹핑
+        let mut reviewer_prs: HashMap<String, Vec<&PrInfo>> = HashMap::new();
+        for pr in pr_infos {
+            for reviewer in &pr.reviewers {
+                reviewer_prs.entry(reviewer.clone()).or_default().push(pr);
+            }
+        }
+
         let mut sent = 0u32;
         let mut skipped = 0u32;
         let mut failed = 0u32;
 
-        let mut users: Vec<&String> = user_map.keys().collect();
-        users.sort();
+        // 1) 리뷰어에게 리뷰 요청 알림
+        log_info(&format!("리뷰어 알림 대상: {}명", reviewer_prs.len()));
+        let mut reviewers: Vec<&String> = reviewer_prs.keys().collect();
+        reviewers.sort();
 
-        for github_user in users {
-            let prs = &user_map[github_user];
-            let slack_id = self.cfg.user_mapping.get(github_user.as_str());
+        // PR별 실제 알림 보낸 리뷰어 추적
+        let mut notified_reviewers_per_pr: HashMap<u64, Vec<String>> = HashMap::new();
 
-            self.print_pr_summary(github_user, prs);
+        for reviewer in &reviewers {
+            let prs = &reviewer_prs[*reviewer];
+            let slack_id = self.cfg.user_mapping.get(reviewer.as_str());
+
+            let now = Utc::now();
+            eprintln!(
+                "\n{}",
+                format!("── {reviewer} ({} PRs) ──", prs.len()).cyan()
+            );
+            for pr in prs {
+                let elapsed = pr
+                    .created_at
+                    .map(|c| format_elapsed(now, c))
+                    .unwrap_or_default();
+                eprintln!(
+                    "  👀 Reviewer {}#{}: {}{}",
+                    pr.repo, pr.number, pr.title, elapsed
+                );
+                eprintln!("    {}", pr.url.dimmed());
+            }
 
             if slack_id.is_none() {
                 log_warn(&format!(
-                    "GitHub 사용자 '{github_user}'의 Slack ID 매핑이 없습니다. 건너뜁니다."
+                    "GitHub 사용자 '{reviewer}'의 Slack ID 매핑이 없습니다. 건너뜁니다."
                 ));
                 failed += 1;
                 continue;
             }
 
             if !self.auto_send
-                && !Self::ask_confirm(&format!("  → {github_user}에게 알림을 보내시겠습니까?"))
+                && !Self::ask_confirm(&format!("  → {reviewer}에게 알림을 보내시겠습니까?"))
             {
-                log_info(&format!("{github_user} 알림 건너뜀"));
+                log_info(&format!("{reviewer} 알림 건너뜀"));
                 skipped += 1;
                 continue;
             }
 
-            let blocks = self.build_slack_blocks(github_user, prs);
-            let text = format!("확인이 필요한 PR이 {}건 있습니다.", prs.len());
+            let blocks = self.build_reviewer_blocks(reviewer, prs);
+            let text = format!("리뷰가 필요한 PR이 {}건 있습니다.", prs.len());
 
             match self.send_bot_dm(slack_id.unwrap(), &blocks, &text) {
-                Ok(()) => sent += 1,
+                Ok(()) => {
+                    sent += 1;
+                    for pr in prs {
+                        notified_reviewers_per_pr
+                            .entry(pr.number)
+                            .or_default()
+                            .push(reviewer.to_string());
+                    }
+                }
                 Err(e) => {
                     log_error(&format!("{e:#}"));
                     failed += 1;
@@ -563,11 +620,45 @@ impl App {
             }
         }
 
+        // 2) Assignee에게 리뷰어 알림 발송 안내
+        let mut assignee_sent = 0u32;
+        for pr in pr_infos {
+            let notified: Vec<&str> = notified_reviewers_per_pr
+                .get(&pr.number)
+                .map(|v| v.iter().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+
+            if notified.is_empty() {
+                continue;
+            }
+
+            for assignee in &pr.assignees {
+                let slack_id = match self.cfg.user_mapping.get(assignee.as_str()) {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let blocks = self.build_assignee_blocks(assignee, pr, &notified);
+                let text = format!(
+                    "{}#{} PR의 리뷰어 {}명에게 알림을 보냈습니다.",
+                    pr.repo,
+                    pr.number,
+                    notified.len()
+                );
+
+                match self.send_bot_dm(slack_id, &blocks, &text) {
+                    Ok(()) => assignee_sent += 1,
+                    Err(e) => log_error(&format!("Assignee {assignee} 알림 실패: {e:#}")),
+                }
+            }
+        }
+
         eprintln!();
         log_info("=== 알림 전송 완료 ===");
         log_info(&format!(
-            "성공: {sent}건, 건너뜀: {skipped}건, 실패: {failed}건"
+            "리뷰어: 성공 {sent}건, 건너뜀 {skipped}건, 실패 {failed}건"
         ));
+        log_info(&format!("Assignee 안내: {assignee_sent}건"));
 
         if sent == 0 && failed > 0 {
             bail!("모든 알림 전송에 실패했습니다.");
