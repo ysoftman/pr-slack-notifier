@@ -6,7 +6,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
 
 // ── CLI ──
 
@@ -23,6 +26,10 @@ struct Cli {
     /// 확인 없이 모든 알림을 자동 전송
     #[arg(long)]
     auto_send: bool,
+
+    /// 상세 로그 출력
+    #[arg(long, short)]
+    verbose: bool,
 
     /// 설정 파일 경로 (기본: config.json)
     #[arg(long, default_value = "config.json")]
@@ -176,7 +183,9 @@ fn log_error(msg: &str) {
 }
 
 fn log_debug(msg: &str) {
-    eprintln!("{} {msg}", "[DEBUG]".blue());
+    if VERBOSE.load(Ordering::Relaxed) {
+        eprintln!("{} {msg}", "[DEBUG]".blue());
+    }
 }
 
 // ── App ──
@@ -578,6 +587,8 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+
+    VERBOSE.store(cli.verbose, Ordering::Relaxed);
 
     if cli.dry_run {
         log_warn("DRY-RUN 모드: 실제 Slack 메시지를 전송하지 않습니다.");
