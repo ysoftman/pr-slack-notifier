@@ -1,17 +1,18 @@
 # PR Slack Notifier
 
-GitHub Enterprise 조직의 열린 PR 담당자들에게 Slack 알림을 보내는 Rust 프로그램입니다.
+GitHub Enterprise 조직의 열린 PR 리뷰어들에게 Slack 알림을 보내는 Rust 프로그램입니다.
 
 ## 기능
 
-- 조직의 모든 열린 PR 조회 (draft 제외)
-- PR별 assignee와 requested reviewer 추출
-- 사용자별로 담당 PR 목록을 모아서 한 번에 전송
-- Bot Token으로 `conversations.open` → `chat:write` API를 통해 각 담당자에게 개인 DM 전송
+- 여러 조직의 모든 열린 PR 조회 (draft 제외)
+- 리뷰 미완료 리뷰어에게 Slack 리뷰 요청 알림 발송
+- Assignee에게 리뷰어 알림 발송 안내 DM 전송
+- Bot Token으로 `conversations.open` → `chat.postMessage` API를 통해 개인 DM 전송
 - Block Kit 기반 깔끔한 메시지 포맷
 - dry-run 모드로 실제 전송 없이 미리보기
-- 알림 전송 전 사용자별 PR 내용을 확인하고 전송 여부를 선택 (기본 동작)
+- 알림 전송 전 리뷰어별 PR 내용을 확인하고 전송 여부를 선택 (기본 동작)
 - `--auto-send` 옵션으로 확인 없이 자동 전송
+- `--verbose` 옵션으로 상세 로그 출력
 
 ## 사전 요구사항
 
@@ -131,22 +132,34 @@ docker run --rm \
 
 알림 메시지는 Block Kit 형식으로 전송됩니다:
 
-```text
-📬 PR 리뷰/처리 요청
+리뷰어에게 보내는 메시지:
 
-@hong-gildong님, 확인이 필요한 PR이 3건 있습니다.
+```text
+📬 PR 리뷰 요청
+
+@hong-gildong님, 리뷰가 필요한 PR이 2건 있습니다.
 
 ────────────────
 my-api#42: API 응답 캐싱 추가
 👀 Reviewer
 
-my-web#108: 로그인 페이지 리디자인
-👤 Assignee
-
 my-sdk#15: SDK v2 마이그레이션
 👀 Reviewer
 ────────────────
-🤖 PR Notifier | 열린 PR 알림
+🤖 PR Notifier | 리뷰 요청 알림
+```
+
+Assignee에게 보내는 메시지:
+
+```text
+📣 PR 리뷰 알림 발송 안내
+
+@kim-cheolsu님, 아래 PR의 리뷰어들에게 리뷰 요청 알림을 보냈습니다.
+
+my-api#42: API 응답 캐싱 추가
+📨 알림 대상: @hong-gildong, @lee-younghee
+────────────────
+🤖 PR Notifier | 리뷰 알림 발송 안내
 ```
 
 ## 프레젠테이션

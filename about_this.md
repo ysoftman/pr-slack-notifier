@@ -10,8 +10,8 @@ GitHub PR 알림을 Slack으로 전달하는 CLI 도구
 
 - Rust로 작성
 - GitHub Enterprise API에서 열린 PR 조회
-- 담당자/리뷰어에게 Slack 알림 발송
-- Bot Token으로 담당자에게 개인 DM 전송
+- 리뷰 미완료 리뷰어에게 Slack 리뷰 요청 알림 발송
+- Assignee에게 리뷰어 알림 발송 안내 DM 전송
 
 <!-- end_slide -->
 
