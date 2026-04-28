@@ -172,9 +172,9 @@ presenterm -X about_this.md
 
 ## cron 설정 예시
 
-매일 오전 10시에 알림을 보내려면:
+평일(월~금) 업무 시간(09:00 ~ 20:30)에만 30분마다 자동 전송하고 로그를 파일에 남기려면:
 
 ```bash
 # crontab -e
-0 10 * * 1-5 /path/to/pr-slack-notifier --auto-send --config /path/to/config.json
+0/30 9-20 * * 1-5 /Users/ysoftman/workspace/pr-slack-notifier/target/debug/pr-slack-notifier --auto-send --config /Users/ysoftman/workspace/pr-slack-notifier/config.json 2>> /Users/ysoftman/workspace/pr-slack-notifier/send_log.log
 ```
