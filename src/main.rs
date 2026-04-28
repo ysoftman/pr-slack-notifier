@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use clap::Parser;
 use colored::Colorize;
 use serde::Deserialize;
@@ -156,21 +156,25 @@ fn env_or(key: &str, fallback: Option<String>) -> String {
 
 // ── Logging ──
 
+fn log_timestamp() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 fn log_info(msg: &str) {
-    eprintln!("{} {msg}", "[INFO]".green());
+    eprintln!("{} {} {msg}", log_timestamp(), "[INFO]".green());
 }
 
 fn log_warn(msg: &str) {
-    eprintln!("{} {msg}", "[WARN]".yellow());
+    eprintln!("{} {} {msg}", log_timestamp(), "[WARN]".yellow());
 }
 
 fn log_error(msg: &str) {
-    eprintln!("{} {msg}", "[ERROR]".red());
+    eprintln!("{} {} {msg}", log_timestamp(), "[ERROR]".red());
 }
 
 fn log_debug(msg: &str) {
     if VERBOSE.load(Ordering::Relaxed) {
-        eprintln!("{} {msg}", "[DEBUG]".blue());
+        eprintln!("{} {} {msg}", log_timestamp(), "[DEBUG]".blue());
     }
 }
 
